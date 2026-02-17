@@ -27,7 +27,9 @@ Birdie Focus は、Obsidian 内で動作する「止まり木」のような作�
 YAMLに以下を追加
 
 friendship: 0
+
 emoji: 🐦
+
 reactions: ["羽繕いをしています", "こちらを観察しています", "居眠りを始めました"]
 
 
