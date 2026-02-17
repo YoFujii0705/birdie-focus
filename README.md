@@ -58,6 +58,8 @@ npm run build
 
 Obsidian の設定から Birdie Focus を有効にします。
 
+上手くいかなかったら「npx esbuild main.ts --bundle --outfile=main.js --external:obsidian --format=cjs --platform=node」を試してみてください。
+
 ## ✒️ Author
 Yo Fujii (藤井佯)
 
