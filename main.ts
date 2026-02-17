@@ -1,6 +1,18 @@
-import { App, Plugin, TFile, Notice, MarkdownPostProcessorContext } from 'obsidian';
+import { App, Plugin, TFile, Notice, MarkdownPostProcessorContext, PluginSettingTab, Setting } from 'obsidian';
+
+// 設定の型定義
+interface BirdFocusSettings {
+    probability: number;
+    intervalMinutes: number;
+}
+
+const DEFAULT_SETTINGS: BirdFocusSettings = {
+    probability: 0.7,
+    intervalMinutes: 4
+}
 
 export default class BirdFocusPlugin extends Plugin {
+    settings: BirdFocusSettings;
     private timerInterval: any = null;
     private elapsedSeconds: number = 0;
     private totalSeconds: number = 0;
@@ -10,9 +22,22 @@ export default class BirdFocusPlugin extends Plugin {
     private activeRefreshUI: Function | null = null;
 
     async onload() {
+        await this.loadSettings();
+
+        // 設定タブの登録
+        this.addSettingTab(new BirdFocusSettingTab(this.app, this));
+
         this.registerMarkdownCodeBlockProcessor("birdie-focus", (source, el, ctx) => {
             this.renderBirdTimer(source, el, ctx);
         });
+    }
+
+    async loadSettings() {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    }
+
+    async saveSettings() {
+        await this.saveData(this.settings);
     }
 
     async renderBirdTimer(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) {
@@ -24,15 +49,12 @@ export default class BirdFocusPlugin extends Plugin {
             if (line.startsWith('goal:')) goalMinutes = parseInt(line.split(':')[1]) || 25;
         });
 
-        // 状態の同期
         if (this.isPaused) {
             this.currentTaskName = taskName;
             this.totalSeconds = goalMinutes * 60;
         }
 
         const container = el.createDiv({ cls: "bird-timer-container" });
-        
-        // --- 修正箇所: 現在のタスク名を表示 ---
         container.createEl("p", { 
             text: `現在実行中のタスク: ${this.currentTaskName}`,
             attr: { style: "font-weight: bold; margin-bottom: -10px; opacity: 0.8;" }
@@ -69,11 +91,10 @@ export default class BirdFocusPlugin extends Plugin {
             this.stopTimer();
         };
 
-        const stopBtn = buttonGroup.createEl("button", { text: "終了して保存" });
+        const stopBtn = buttonGroup.createEl("button", { text: "終了しておやつタイム" });
         stopBtn.onclick = () => {
             this.stopTimer();
             this.renderResult(container, this.visitors, this.currentTaskName, this.elapsedSeconds, el, ctx);
-            this.resetState();
         };
 
         if (!this.isPaused) {
@@ -88,7 +109,9 @@ export default class BirdFocusPlugin extends Plugin {
         this.timerInterval = window.setInterval(() => {
             this.elapsedSeconds++;
             if (this.activeRefreshUI) this.activeRefreshUI();
-            if (this.elapsedSeconds > 0 && this.elapsedSeconds % 240 === 0) {
+            
+            // 設定された頻度（分 * 60秒）での抽選
+            if (this.elapsedSeconds > 0 && this.elapsedSeconds % (this.settings.intervalMinutes * 60) === 0) {
                 this.tryInviteBird(logArea);
             }
         }, 1000);
@@ -101,14 +124,6 @@ export default class BirdFocusPlugin extends Plugin {
         }
     }
 
-    private resetState() {
-        this.elapsedSeconds = 0;
-        this.visitors = [];
-        this.isPaused = true;
-        this.activeRefreshUI = null;
-        this.currentTaskName = "";
-    }
-
     formatTime(seconds: number): string {
         const absSec = Math.abs(seconds);
         const h = Math.floor(absSec / 3600).toString().padStart(2, '0');
@@ -118,7 +133,8 @@ export default class BirdFocusPlugin extends Plugin {
     }
 
     async tryInviteBird(logArea: HTMLElement) {
-        if (Math.random() < 0.7) {
+        // 設定された確率で抽選
+        if (Math.random() < this.settings.probability) {
             const birdFiles = this.app.vault.getFiles().filter(f => f.path.startsWith("Birds/"));
             if (birdFiles.length === 0) return;
             const birdFile = birdFiles[Math.floor(Math.random() * birdFiles.length)];
@@ -137,6 +153,8 @@ export default class BirdFocusPlugin extends Plugin {
 
     async renderResult(container: HTMLElement, visitors: any[], taskName: string, elapsedSeconds: number, el: HTMLElement, ctx: MarkdownPostProcessorContext) {
         container.empty();
+        container.createEl("h3", { text: "本日の訪問記録" });
+
         const finalMinutes = Math.floor(elapsedSeconds / 60);
         const finalSeconds = elapsedSeconds % 60;
         const timeString = finalMinutes > 0 ? `${finalMinutes}分${finalSeconds}秒` : `${finalSeconds}秒`;
@@ -144,19 +162,6 @@ export default class BirdFocusPlugin extends Plugin {
         
         const resultText = `\n### 🐦 作業ログ: ${taskName}\n- **実施日**: ${new Date().toLocaleString()}\n- **作業時間**: ${timeString}\n- **訪問者**: ${birdNames}\n\n---`;
 
-        const activeFile = this.app.workspace.getActiveFile();
-        if (activeFile) {
-            const content = await this.app.vault.read(activeFile);
-            const section = ctx.getSectionInfo(el);
-            if (section) {
-                const lines = content.split('\n');
-                lines.splice(section.lineStart, section.lineEnd - section.lineStart + 1, resultText);
-                await this.app.vault.modify(activeFile, lines.join('\n'));
-                new Notice("作業ログを保存しました。");
-            }
-        }
-
-        container.createEl("h3", { text: "本日の訪問記録" });
         if (visitors.length > 0) {
             const uniqueNames = [...new Set(visitors.map(v => v.name))];
             uniqueNames.forEach(name => {
@@ -175,7 +180,32 @@ export default class BirdFocusPlugin extends Plugin {
                     snackBtn.disabled = true;
                 };
             });
+        } else {
+            container.createEl("p", { text: "今回は鳥は来ませんでした。" });
         }
+
+        // --- 修正箇所: おやつタイムの後に手動で保存するボタン ---
+        const saveBtn = container.createEl("button", { 
+            text: "ログを保存して終了",
+            attr: { style: "margin-top: 20px; width: 100%;" }
+        });
+        saveBtn.onclick = async () => {
+            const activeFile = this.app.workspace.getActiveFile();
+            if (activeFile) {
+                const content = await this.app.vault.read(activeFile);
+                const section = ctx.getSectionInfo(el);
+                if (section) {
+                    const lines = content.split('\n');
+                    lines.splice(section.lineStart, section.lineEnd - section.lineStart + 1, resultText);
+                    await this.app.vault.modify(activeFile, lines.join('\n'));
+                    new Notice("作業ログを保存しました。");
+                }
+            }
+            this.elapsedSeconds = 0;
+            this.visitors = [];
+            this.isPaused = true;
+            this.currentTaskName = "";
+        };
     }
 
     async incrementFriendship(birdName: string) {
@@ -185,5 +215,45 @@ export default class BirdFocusPlugin extends Plugin {
                 fm["friendship"] = (fm["friendship"] || 0) + 1;
             });
         }
+    }
+}
+
+// 設定画面のUIクラス
+class BirdFocusSettingTab extends PluginSettingTab {
+    plugin: BirdFocusPlugin;
+
+    constructor(app: App, plugin: BirdFocusPlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
+
+    display(): void {
+        const { containerEl } = this;
+        containerEl.empty();
+        containerEl.createEl('h2', { text: 'Birdie Focus 設定' });
+
+        new Setting(containerEl)
+            .setName('鳥の出現確率')
+            .setDesc('鳥が訪れる確率を設定します (0.1 = 10%, 1.0 = 100%)')
+            .addSlider(slider => slider
+                .setLimits(0, 1, 0.1)
+                .setValue(this.plugin.settings.probability)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    this.plugin.settings.probability = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('出現頻度 (分)')
+            .setDesc('何分ごとに出現判定を行うか設定します (3分〜60分)')
+            .addSlider(slider => slider
+                .setLimits(3, 60, 1)
+                .setValue(this.plugin.settings.intervalMinutes)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    this.plugin.settings.intervalMinutes = value;
+                    await this.plugin.saveSettings();
+                }));
     }
 }
