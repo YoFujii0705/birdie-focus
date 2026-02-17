@@ -51,6 +51,7 @@ goalにはカウントする時間（分）を記入してください。
 フォルダ内で以下のコマンドを実行します。
 
 npm install
+
 npm run build
 
 Obsidian の設定から Birdie Focus を有効にします。
